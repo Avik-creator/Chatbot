@@ -2,41 +2,59 @@ import os
 import json
 import datetime
 import csv
+import random
 import nltk
 import ssl
 import streamlit as st
-import random
+from nltk.tokenize import word_tokenize
+from nltk.corpus import stopwords
+from nltk.stem import WordNetLemmatizer
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.linear_model import LogisticRegression
 
-
+# Fix SSL issue for NLTK downloads
 ssl._create_default_https_context = ssl._create_unverified_context
-nltk.data.path.append(os.path.abspath("nltk_data"))
-nltk.download("punkt")
 
+# Download required NLTK resources
+nltk.download("punkt")
+nltk.download("stopwords")
+nltk.download("wordnet")
+
+# Initialize lemmatizer and stopwords
+lemmatizer = WordNetLemmatizer()
+stop_words = set(stopwords.words("english"))
+
+# Load intents.json file
 file_path = os.path.abspath("./intents.json")
 with open(file_path, "r") as file:
     intents = json.load(file)
 
-vectorize = TfidfVectorizer(ngram_range=(1, 4))
-clf = LogisticRegression(random_state=0, max_iter=10000)
+# Preprocessing function for better text accuracy
+def preprocess_text(text):
+    tokens = word_tokenize(text.lower())  # Tokenize and convert to lowercase
+    filtered_tokens = [
+        lemmatizer.lemmatize(word) for word in tokens if word.isalnum() and word not in stop_words
+    ]
+    return " ".join(filtered_tokens)
 
+# Extract training data
 tags = []
 patterns = []
 for intent in intents:
-    for pattern in intent['patterns']:
-        tags.append(intent['tag'])
-        patterns.append(pattern)
+    for pattern in intent["patterns"]:
+        processed_text = preprocess_text(pattern)
+        tags.append(intent["tag"])
+        patterns.append(processed_text)
 
+# Vectorization and model training
+vectorize = TfidfVectorizer(ngram_range=(1, 3))
 X = vectorize.fit_transform(patterns)
 y = tags
+
+clf = LogisticRegression(random_state=0, max_iter=10000)
 clf.fit(X, y)
 
-x = vectorize.fit_transform(patterns)
-y = tags
-clf.fit(x, y)
-
-
+# Streamlit UI Configuration
 st.set_page_config(
     page_title="NLP Chatbot",
     page_icon="🤖",
@@ -44,7 +62,7 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# Custom CSS for styling
+# CSS for better UI styling
 st.markdown("""
     <style>
         .stTextInput>div>div>input {
@@ -54,12 +72,6 @@ st.markdown("""
         .stTextArea>div>div>textarea {
             border-radius: 15px;
             padding: 15px;
-        }
-        .sidebar .sidebar-content {
-            background-color: #f8f9fa;
-        }
-        .css-1d391kg {
-            padding-top: 3rem;
         }
         .chat-user {
             background-color: #e3f2fd;
@@ -90,29 +102,21 @@ st.markdown("""
             margin: 1rem 0;
             border-top: 1px solid #eee;
         }
-        .title {
-            color: #1e88e5;
-        }
-        .team-member {
-            padding: 8px;
-            margin: 5px 0;
-            background-color: #f5f5f5;
-            border-radius: 8px;
-        }
     </style>
 """, unsafe_allow_html=True)
 
-counter = 0
-
+# Chatbot response function
 def chatbot(user_input):
-    input_text = vectorize.transform([user_input])
-    tag = clf.predict(input_text)[0]
-    for intent in intents:
-        if intent['tag'] == tag:
-            return random.choice(intent['responses'])
+    processed_input = preprocess_text(user_input)
+    input_vector = vectorize.transform([processed_input])
+    tag = clf.predict(input_vector)[0]
 
+    for intent in intents:
+        if intent["tag"] == tag:
+            return random.choice(intent["responses"])
+
+# Main chatbot interface
 def main():
-    global counter
     st.title("🤖 NLP Chatbot")
     st.markdown("<div class='divider'></div>", unsafe_allow_html=True)
 
@@ -122,48 +126,40 @@ def main():
     if choice == "Home":
         st.subheader("Welcome to our NLP Chatbot")
         st.write("Start a conversation by typing a message below.")
-        
-        # Check if the chat_log.csv file exists, and if not, create it with column names
-        if not os.path.exists('chat_log.csv'):
-            with open('chat_log.csv', 'w', newline='', encoding='utf-8') as csvfile:
-                csv_writer = csv.writer(csvfile)
-                csv_writer.writerow(['User Input', 'Chatbot Response', 'Timestamp'])
 
-        counter += 1
-        user_input = st.text_input("Type your message here and press Enter:", 
-                                 key=f"user_input_{counter}",
-                                 placeholder="Ask me anything...")
+        # Ensure chat log file exists
+        if not os.path.exists("chat_log.csv"):
+            with open("chat_log.csv", "w", newline="", encoding="utf-8") as csvfile:
+                csv_writer = csv.writer(csvfile)
+                csv_writer.writerow(["User Input", "Chatbot Response", "Timestamp"])
+
+        user_input = st.text_input("Type your message here and press Enter:", placeholder="Ask me anything...")
 
         if user_input:
-            user_input_str = str(user_input)
             response = chatbot(user_input)
-            
-            # Display chat bubbles
-            st.markdown(f"<div class='chat-user'>{user_input_str}</div>", unsafe_allow_html=True)
+
+            # Display chat
+            st.markdown(f"<div class='chat-user'>{user_input}</div>", unsafe_allow_html=True)
             st.markdown(f"<div class='chat-bot'>{response}</div>", unsafe_allow_html=True)
-            
-            # Get the current timestamp
+
+            # Log conversation
             timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-            st.markdown(f"<div class='timestamp'>{timestamp}</div>", unsafe_allow_html=True)
-            st.markdown("<div class='divider'></div>", unsafe_allow_html=True)
-
-            # Save the conversation
-            with open('chat_log.csv', 'a', newline='', encoding='utf-8') as csvfile:
+            with open("chat_log.csv", "a", newline="", encoding="utf-8") as csvfile:
                 csv_writer = csv.writer(csvfile)
-                csv_writer.writerow([user_input_str, response, timestamp])
+                csv_writer.writerow([user_input, response, timestamp])
 
-            if response.lower() in ['goodbye', 'bye']:
+            if response.lower() in ["goodbye", "bye"]:
                 st.success("Thank you for chatting with me. Have a great day!")
                 st.stop()
-                
+
     elif choice == "Conversation History":
         st.header("📜 Conversation History")
         st.markdown("<div class='divider'></div>", unsafe_allow_html=True)
-        
+
         try:
-            with open('chat_log.csv', 'r', encoding='utf-8') as csvfile:
+            with open("chat_log.csv", "r", encoding="utf-8") as csvfile:
                 csv_reader = csv.reader(csvfile)
-                next(csv_reader)  # Skip header
+                next(csv_reader)
                 for row in csv_reader:
                     st.markdown(f"<div class='chat-user'>{row[0]}</div>", unsafe_allow_html=True)
                     st.markdown(f"<div class='chat-bot'>{row[1]}</div>", unsafe_allow_html=True)
@@ -171,59 +167,13 @@ def main():
                     st.markdown("<div class='divider'></div>", unsafe_allow_html=True)
         except FileNotFoundError:
             st.warning("No conversation history found. Start chatting first!")
-            
-    elif choice == "About": 
+
+    elif choice == "About":
         st.header("ℹ️ About This Project")
         st.markdown("<div class='divider'></div>", unsafe_allow_html=True)
-        
         st.write("""
-        This project was created by a group of 5 students studying in the 3rd Year of B.Tech in Information Technology 
-        at Maulana Abul Kalam Azad University of Technology, West Bengal.
-        """)
-
-        st.subheader("👥 Group Members:")
-        st.markdown("""
-        <div class="team-member"><strong>Nirvik Ghosh</strong></div>
-        <div class="team-member"><strong>Rudra Banerjee</strong></div>
-        <div class="team-member"><strong>Snehasis Sardar</strong></div>
-        <div class="team-member"><strong>Subha Sadhu</strong></div>
-        <div class="team-member"><strong>Avik Mukherjee</strong></div>
-        """, unsafe_allow_html=True)
-
-        st.write("""
-        This project is a part of the course 'Natural Language Processing'. Each member of the group has contributed 
-        to the project in various ways, including data collection, model training, interface design, and documentation.
-        """)
-
-        st.subheader("📚 Project Overview:")
-        st.write("""
-        The project is divided into two parts:
-        1. **NLP techniques and Logistic Regression algorithm** is used to train the chatbot on labeled intents and entities.
-        2. For building the **Chatbot interface**, Streamlit web framework is used to build a web-based chatbot interface. 
-           The interface allows users to input text and receive responses from the chatbot.
-        """)
-
-        st.subheader("📊 Dataset:")
-        st.write("""
-        The dataset used in this project is a collection of labelled intents and entities. The data is stored in a list.
-        - **Intents**: The intent of the user input (e.g. "greeting", "budget", "about")
-        - **Entities**: The entities extracted from user input (e.g. "Hi", "How do I create a budget?", "What is your purpose?")
-        - **Text**: The user input text.
-        """)
-
-        st.subheader("💻 Streamlit Chatbot Interface:")
-        st.write("""
-        The chatbot interface is built using Streamlit. The interface includes a text input box for users to input their text 
-        and a chat window to display the chatbot's responses. The interface uses the trained model to generate responses 
-        to user input.
-        """)
-
-        st.subheader("🎯 Conclusion:")
-        st.write("""
-        In this project, a chatbot is built that can understand and respond to user input based on intents. 
-        The chatbot was trained using NLP and Logistic Regression, and the interface was built using Streamlit. 
-        This project can be extended by adding more data, using more sophisticated NLP techniques, or implementing 
-        deep learning algorithms.
+        This project was created as a part of the **Natural Language Processing** course.
+        It uses **NLTK for preprocessing** and **Logistic Regression with TF-IDF** for intent classification.
         """)
 
 if __name__ == "__main__":
